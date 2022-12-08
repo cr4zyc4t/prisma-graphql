@@ -9,11 +9,10 @@ import {
   resolvers,
   ResolversEnhanceMap,
 } from "./typegraphql";
-import { ApolloServer } from "@apollo/server";
-import { expressMiddleware } from "@apollo/server/express4";
 import { GraphQLError } from "graphql";
 import { Authorized } from "type-graphql";
 import ProfileResolver from "./profileResolver";
+import { createYoga } from "graphql-yoga";
 
 async function main() {
   const prismaClient = new PrismaClient();
@@ -52,20 +51,18 @@ async function main() {
     // },
   });
 
-  const apolloServer = new ApolloServer({
-    schema,
-  });
-  await apolloServer.start();
-
   const app = express();
 
   app.use(express.json());
 
   app.use(
     "/graphql",
-    expressMiddleware(apolloServer, {
-      context: async ({ req }) => {
-        const [id, role] = req.headers.authorization?.split("_") as string[];
+    createYoga({
+      schema,
+      context: async ({ request }) => {
+        const [id, role] = (request.headers.get("authorization") || "").split(
+          "_"
+        ) as string[];
         let user: any;
         if (role) {
           user = { id, role };
@@ -86,11 +83,6 @@ async function main() {
       },
     })
   );
-
-  app.use((err, req, res, next) => {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  });
 
   app.listen(8081, () => {
     console.log(
