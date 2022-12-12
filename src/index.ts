@@ -1,7 +1,11 @@
 import "reflect-metadata";
+import { ApolloServer } from "@apollo/server";
+import { expressMiddleware } from "@apollo/server/express4";
+import { ApolloServerPluginDrainHttpServer } from "@apollo/server/plugin/drainHttpServer";
 import { PrismaClient } from "@prisma/client";
 import express from "express";
 import { buildSchema } from "type-graphql";
+import http from "http";
 import {
   applyModelsEnhanceMap,
   applyResolversEnhanceMap,
@@ -12,16 +16,22 @@ import {
 import { GraphQLError } from "graphql";
 import { Authorized } from "type-graphql";
 import ProfileResolver from "./profileResolver";
-import { createYoga } from "graphql-yoga";
+
+interface MyContext {
+  user: {
+    id: string;
+    role: string;
+  };
+  prisma: PrismaClient;
+}
 
 async function main() {
   const prismaClient = new PrismaClient();
 
   const modelEnhanceMap: ModelsEnhanceMap = {
     Post: {
-      // class: [Authorized("xxx")],
       fields: {
-        viewCount: [Authorized("xxx")],
+        viewCount: [Authorized("ADMIN2")],
       },
     },
   };
@@ -33,7 +43,7 @@ async function main() {
   };
 
   applyResolversEnhanceMap(resolversEnhanceMap);
-  // applyModelsEnhanceMap(modelEnhanceMap);
+  applyModelsEnhanceMap(modelEnhanceMap);
 
   const schema = await buildSchema({
     resolvers: [...resolvers, ProfileResolver],
@@ -53,14 +63,24 @@ async function main() {
 
   const app = express();
 
+  // Our httpServer handles incoming requests to our Express app.
+  // Below, we tell Apollo Server to "drain" this httpServer,
+  // enabling our servers to shut down gracefully.
+  const httpServer = http.createServer(app);
+
+  const server = new ApolloServer<MyContext>({
+    schema,
+    plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
+  });
+  await server.start();
+
   app.use(express.json());
 
   app.use(
     "/graphql",
-    createYoga({
-      schema,
-      context: async ({ request }) => {
-        const [id, role] = (request.headers.get("authorization") || "").split(
+    expressMiddleware(server, {
+      context: async ({ req, res }) => {
+        const [id, role] = (req.headers.authorization || "").split(
           "_"
         ) as string[];
         let user: any;
@@ -84,7 +104,11 @@ async function main() {
     })
   );
 
-  app.listen(8081, () => {
+  app.use((error) => {
+    console.log("🚀 ~ file: index.ts:108 ~ main ~ error", error);
+  });
+
+  httpServer.listen(8081, () => {
     console.log(
       "Running a GraphQL API server at http://localhost:8081/graphql"
     );
